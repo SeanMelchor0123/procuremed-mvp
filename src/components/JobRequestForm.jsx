@@ -1,65 +1,97 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
 
-const JobRequestForm = () => {
-  const { addRequest } = useStore();
+const emptyItem = () => ({ itemName: '', brand: '', quantity: '' });
 
-  const [formData, setFormData] = useState({
-    itemName: '',
-    brand: '',
-    quantity: '',
+const JobRequestForm = () => {
+  const { addRequisition } = useStore();
+
+  const [header, setHeader] = useState({
     deliveryDate: '',
     deliveryLocation: '',
     urgency: 'Normal',
   });
+  const [items, setItems] = useState([emptyItem()]);
 
   const [pastOrders] = useState([
     { id: '001', date: '2025-07-28', itemName: 'IV Catheters M', brand: 'Surgitech', quantity: 300, status: 'Delivered' },
     { id: '002', date: '2025-08-11', itemName: 'Paracetamol 500mg', brand: 'Generix', quantity: 600, status: 'In Transit' },
   ]);
 
-  const onChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+  const onHeaderChange = (e) => setHeader(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  const onItemChange = (idx, field, value) => setItems(prev => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r));
+  const addRow = () => setItems(prev => [...prev, emptyItem()]);
+  const removeRow = (idx) => setItems(prev => prev.length === 1 ? prev : prev.filter((_, i) => i !== idx));
+
+  const validate = () => {
+    if (!header.deliveryDate || !header.deliveryLocation) return false;
+    for (const row of items) {
+      if (!row.itemName || !row.brand || !row.quantity || Number(row.quantity) <= 0) return false;
+    }
+    return true;
   };
 
   const submit = (e) => {
     e.preventDefault();
-    const payload = {
-      itemName: formData.itemName.trim(),
-      brand: formData.brand.trim(),
-      quantity: parseInt(formData.quantity || '0', 10),
-      deliveryDate: formData.deliveryDate,
-      deliveryLocation: formData.deliveryLocation.trim(),
-      urgency: formData.urgency,
-    };
-    if (!payload.itemName || !payload.brand || !payload.quantity || !payload.deliveryDate || !payload.deliveryLocation) {
-      alert('Please fill all required fields.');
-      return;
-    }
-    addRequest(payload);
-    alert(`Request saved: ${payload.itemName}`);
-    setFormData({
-      itemName: '', brand: '', quantity: '', deliveryDate: '', deliveryLocation: '', urgency: 'Normal'
-    });
+    if (!validate()) { alert('Please complete all fields and ensure quantities are > 0.'); return; }
+    const id = addRequisition(header, items);
+    alert(`Requisition #${id} created with ${items.length} item(s).`);
+    setHeader({ deliveryDate: '', deliveryLocation: '', urgency: 'Normal' });
+    setItems([emptyItem()]);
   };
 
   return (
     <div className="gap-8">
       <div className="card">
-        <h2>Job Request Form</h2>
-        <form onSubmit={submit} className="form-grid mt-8">
-          <input className="input" name="itemName" placeholder="Item Name" value={formData.itemName} onChange={onChange} required />
-          <input className="input" name="brand" placeholder="Brand" value={formData.brand} onChange={onChange} required />
-          <input className="input" type="number" name="quantity" placeholder="Quantity" value={formData.quantity} onChange={onChange} required />
-          <input className="input" type="date" name="deliveryDate" value={formData.deliveryDate} onChange={onChange} required />
-          <input className="input" name="deliveryLocation" placeholder="Delivery Location (e.g., Region I)" value={formData.deliveryLocation} onChange={onChange} required />
-          <select className="select" name="urgency" value={formData.urgency} onChange={onChange}>
-            <option>Normal</option>
-            <option>Critical</option>
-          </select>
-          <div className="form-actions" style={{ gridColumn: '1 / -1' }}>
-            <button type="submit" className="button primary">Submit Request</button>
+        <h2>Create Requisition</h2>
+
+        <form onSubmit={submit} className="mt-8">
+          <div className="form-grid">
+            <input className="input" type="date" name="deliveryDate" value={header.deliveryDate} onChange={onHeaderChange} required />
+            <input className="input" name="deliveryLocation" placeholder="Delivery Location (e.g., Region I)" value={header.deliveryLocation} onChange={onHeaderChange} required />
+            <select className="select" name="urgency" value={header.urgency} onChange={onHeaderChange}>
+              <option>Normal</option>
+              <option>Critical</option>
+            </select>
+          </div>
+
+          <div className="mt-16">
+            <h3>Items</h3>
+            <div className="mt-8" style={{ overflowX: 'auto' }}>
+              <table className="table" style={{ minWidth: 720 }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: '40%' }}>Item Name</th>
+                    <th style={{ width: '25%' }}>Brand</th>
+                    <th style={{ width: '20%' }}>Quantity</th>
+                    <th style={{ width: '15%' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((row, idx) => (
+                    <tr key={idx}>
+                      <td><input className="input" placeholder="e.g., Amoxicillin 500mg" value={row.itemName} onChange={(e) => onItemChange(idx, 'itemName', e.target.value)} required /></td>
+                      <td><input className="input" placeholder="Brand" value={row.brand} onChange={(e) => onItemChange(idx, 'brand', e.target.value)} required /></td>
+                      <td><input className="input" type="number" min="1" placeholder="Qty" value={row.quantity} onChange={(e) => onItemChange(idx, 'quantity', e.target.value)} required /></td>
+                      <td>
+                        <button type="button" className="button ghost" onClick={() => removeRow(idx)} disabled={items.length === 1}>
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="mt-8" style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="button" onClick={addRow}>+ Add another item</button>
+                <div style={{ color: 'var(--muted)', fontSize: 12 }}>One requisition = shared delivery date, location, urgency.</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="form-actions" style={{ marginTop: 16 }}>
+            <button type="submit" className="button primary">Create Requisition</button>
           </div>
         </form>
       </div>

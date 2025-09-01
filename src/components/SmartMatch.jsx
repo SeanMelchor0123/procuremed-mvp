@@ -8,24 +8,31 @@ const regionMatch = (inventoryRegions, requestLocation) => {
 };
 
 const SmartMatch = () => {
-  const { requests, inventory, addOrders, consumeInventoryForOrders, removeRequest } = useStore();
-  const [selectedReqId, setSelectedReqId] = useState(requests[0]?.id || null);
+  const { requisitions, inventory, addOrders, consumeInventoryForOrders, markItemAccepted } = useStore();
 
-  const request = useMemo(
-    () => requests.find(r => r.id === selectedReqId) || null,
-    [requests, selectedReqId]
+  const [selectedReqId, setSelectedReqId] = useState(requisitions[0]?.id || null);
+  const selectedReq = useMemo(
+    () => requisitions.find(r => r.id === selectedReqId) || null,
+    [requisitions, selectedReqId]
+  );
+
+  const [selectedItemId, setSelectedItemId] = useState(null);
+  const selectedItem = useMemo(
+    () => selectedReq?.items.find(it => it.id === selectedItemId) || null,
+    [selectedReq, selectedItemId]
   );
 
   const plan = useMemo(() => {
-    if (!request) return null;
-    const reqName = normalize(request.itemName);
-    const reqBrand = normalize(request.brand);
-    let remaining = request.quantity;
+    if (!selectedReq || !selectedItem) return null;
+
+    const reqName = normalize(selectedItem.itemName);
+    const reqBrand = normalize(selectedItem.brand);
+    let remaining = selectedItem.quantity;
 
     const eligible = inventory.filter(row => {
       const sameItem = normalize(row.itemName) === reqName;
       const brandOk = !reqBrand || normalize(row.brand) === reqBrand;
-      const regionOk = regionMatch(row.deliveryRegions || '', request.deliveryLocation || '');
+      const regionOk = regionMatch(row.deliveryRegions || '', selectedReq.deliveryLocation || '');
       return sameItem && brandOk && regionOk && (row.quantity > 0);
     });
 
@@ -33,7 +40,6 @@ const SmartMatch = () => {
 
     const allocations = [];
     let totalCost = 0;
-
     for (const row of eligible) {
       if (remaining <= 0) break;
       const take = Math.min(row.quantity, remaining);
@@ -50,14 +56,15 @@ const SmartMatch = () => {
     }
 
     return {
-      request,
+      requisition: selectedReq,
+      item: selectedItem,
       allocations,
       totalCost,
-      matchedQty: request.quantity - remaining,
+      matchedQty: selectedItem.quantity - remaining,
       remainingQty: remaining,
       status: remaining <= 0 ? 'Fully Matched' : (allocations.length ? 'Partially Matched' : 'No Match')
     };
-  }, [request, inventory]);
+  }, [selectedReq, selectedItem, inventory]);
 
   const acceptPlan = () => {
     if (!plan || !plan.allocations.length) {
@@ -68,51 +75,73 @@ const SmartMatch = () => {
 
     const batch = plan.allocations.map(a => ({
       id: Date.now() + Math.random(),
-      requestId: plan.request.id,
+      requisitionId: plan.requisition.id,
+      itemId: plan.item.id,
       supplierName: a.supplierName,
       itemName: a.itemName,
       brand: a.brand,
       quantity: a.allocatedQty,
       unitPrice: a.unitPrice,
       lineCost: a.lineCost,
-      deliveryLocation: plan.request.deliveryLocation,
-      neededBy: plan.request.deliveryDate,
-      urgency: plan.request.urgency,
+      deliveryLocation: plan.requisition.deliveryLocation,
+      neededBy: plan.requisition.deliveryDate,
+      urgency: plan.requisition.urgency,
       status: 'Accepted',
       createdAt: nowIso
     }));
 
     addOrders(batch);
     consumeInventoryForOrders(batch);
-    removeRequest(plan.request.id);
+    markItemAccepted(plan.requisition.id, plan.item.id);
 
-    alert('Plan accepted and sent to suppliers. Request closed.');
+    alert('Allocations accepted. Line item marked Accepted.');
   };
 
   return (
     <div className="gap-8">
       <div className="card">
         <h2>Procurement Matching</h2>
+
         <div className="mt-8">
-          {requests.length === 0 ? (
-            <div className="badge info">No open requests. Create one from Job Requests.</div>
-          ) : (
-            <>
-              <label style={{ fontWeight: 600, marginRight: 8 }}>Select Request:</label>
-              <select
-                className="select"
-                value={selectedReqId || ''}
-                onChange={(e) => setSelectedReqId(Number(e.target.value))}
-              >
-                {requests.map(r => (
-                  <option key={r.id} value={r.id}>
-                    {r.itemName} ({r.brand || 'Any'}) — Qty {r.quantity} — {r.deliveryLocation}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
+          <label style={{ fontWeight: 600, marginRight: 8 }}>Select Requisition:</label>
+          <select
+            className="select"
+            value={selectedReqId || ''}
+            onChange={(e) => { setSelectedReqId(Number(e.target.value)); setSelectedItemId(null); }}
+          >
+            {requisitions.map(r => (
+              <option key={r.id} value={r.id}>
+                #{r.id} — {r.deliveryLocation} — {r.deliveryDate} — {r.urgency} — {r.status}
+              </option>
+            ))}
+          </select>
         </div>
+
+        {selectedReq && (
+          <div className="mt-16">
+            <h3>Items in Requisition</h3>
+            <div className="mt-8">
+              {selectedReq.items.map(it => (
+                <div key={it.id} className="row">
+                  <div className="kv">
+                    <b>{it.itemName}</b>
+                    <span>({it.brand})</span>
+                    <span>Qty {it.quantity}</span>
+                    <span>Status: {it.status}</span>
+                  </div>
+                  <button
+                    className="button"
+                    onClick={() => setSelectedItemId(it.id)}
+                    disabled={it.status === 'Accepted'}
+                    title={it.status === 'Accepted' ? 'Already accepted' : 'Match this line'}
+                  >
+                    {it.status === 'Accepted' ? 'Accepted' : 'Match'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {plan && (
@@ -120,15 +149,16 @@ const SmartMatch = () => {
           <div className="card">
             <h3>Match Summary</h3>
             <div className="mt-8 kv">
+              <span><b>Line:</b> {plan.item.itemName} ({plan.item.brand})</span>
               <span><b>Status:</b> {plan.status}</span>
-              <span><b>Requested:</b> {plan.request.quantity}</span>
+              <span><b>Requested:</b> {plan.item.quantity}</span>
               <span><b>Matched:</b> {plan.matchedQty}</span>
               <span><b>Remaining:</b> {plan.remainingQty}</span>
               <span><b>Total Cost:</b> ₱{plan.totalCost.toFixed(2)}</span>
             </div>
             <div className="mt-16">
               <button className="button success" disabled={!plan.allocations.length} onClick={acceptPlan}>
-                Accept Plan & Notify Suppliers
+                Accept Allocations & Notify Suppliers
               </button>
             </div>
           </div>

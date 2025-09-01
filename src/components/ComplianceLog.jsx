@@ -1,8 +1,19 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useStore } from '../store';
 
 const ComplianceLog = () => {
-  const { requests, inventory, orders } = useStore();
+  const { requisitions, inventory, orders } = useStore();
+
+  // Group orders by requisition
+  const ordersByReq = useMemo(() => {
+    const m = new Map();
+    for (const o of orders) {
+      const key = o.requisitionId || 'ungrouped';
+      if (!m.has(key)) m.set(key, []);
+      m.get(key).push(o);
+    }
+    return m;
+  }, [orders]);
 
   return (
     <div className="gap-8">
@@ -13,46 +24,54 @@ const ComplianceLog = () => {
         </div>
       </div>
 
+      {/* Requisitions with their items and any related orders */}
       <div className="card">
-        <h3>Accepted Orders</h3>
+        <h3>Requisitions</h3>
         <div className="mt-8">
-          {orders.length === 0 && <div className="badge info">No accepted orders yet.</div>}
-          {orders.map(o => (
-            <div key={o.id} className="row">
+          {requisitions.length === 0 && <div className="badge info">No requisitions yet.</div>}
+          {requisitions.map(r => (
+            <div key={r.id} className="card" style={{ marginTop: 10 }}>
               <div className="kv">
-                <b>{o.itemName}</b>
-                <span>({o.brand})</span>
-                <span>Qty {o.quantity}</span>
-                <span>@ ₱{Number(o.unitPrice).toFixed(2)}</span>
-                <span>Supplier: {o.supplierName}</span>
-                <span>Status: {o.status}</span>
-              </div>
-              <div className="kv">
-                <span>Req #{o.requestId}</span>
-                <span>Deliver to: {o.deliveryLocation}</span>
-                <span>Needed by: {o.neededBy}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="card">
-        <h3>Recent Requests (Open)</h3>
-        <div className="mt-8">
-          {requests.length === 0 && <div className="badge info">No open requests.</div>}
-          {requests.map((r) => (
-            <div key={r.id} className="row">
-              <div className="kv">
-                <b>{r.itemName}</b>
-                <span>({r.brand})</span>
-                <span>Qty {r.quantity}</span>
-                <span>Urgency: {r.urgency}</span>
-              </div>
-              <div className="kv">
-                <span>Date needed: {r.deliveryDate}</span>
+                <b>Requisition #{r.id}</b>
+                <span>Delivery: {r.deliveryDate}</span>
                 <span>Location: {r.deliveryLocation}</span>
+                <span>Urgency: {r.urgency}</span>
                 <span>Status: {r.status}</span>
+              </div>
+
+              <div className="mt-8">
+                <h3>Items</h3>
+                {r.items.map(it => (
+                  <div key={it.id} className="row">
+                    <div className="kv">
+                      <b>{it.itemName}</b>
+                      <span>({it.brand})</span>
+                      <span>Qty {it.quantity}</span>
+                      <span>Status: {it.status}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-8">
+                <h3>Orders</h3>
+                {!(ordersByReq.get(r.id)?.length) && <div className="badge info">No accepted orders for this requisition.</div>}
+                {(ordersByReq.get(r.id) || []).map(o => (
+                  <div key={o.id} className="row">
+                    <div className="kv">
+                      <b>{o.itemName}</b>
+                      <span>({o.brand})</span>
+                      <span>Qty {o.quantity}</span>
+                      <span>@ ₱{Number(o.unitPrice).toFixed(2)}</span>
+                      <span>Supplier: {o.supplierName}</span>
+                      <span>Status: {o.status}</span>
+                    </div>
+                    <div className="kv">
+                      <span>Needed by: {o.neededBy}</span>
+                      <span>Deliver to: {o.deliveryLocation}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ))}

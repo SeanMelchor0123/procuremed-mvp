@@ -29,7 +29,7 @@ const Login = () => {
         </div>
       </form>
       <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8 }}>
-        (Demo login only. Replace with Cognito later.)
+        (Demo login only)
       </div>
     </div>
   );

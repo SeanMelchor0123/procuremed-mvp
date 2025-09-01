@@ -1,119 +1,283 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import Papa from 'papaparse';
 import { useStore } from '../store';
 
 const InventoryUpload = () => {
-  const { user, addInventoryItem, addInventoryBulk } = useStore();
+  const {
+    user,
+    inventory,
+    addInventoryItem,
+    addInventoryBulk,
+    updateInventoryItem,
+    deleteInventoryItem,
+  } = useStore();
 
-  const [formData, setFormData] = useState({
+  // simple form state for single add
+  const [form, setForm] = useState({
     itemName: '',
     brand: '',
     quantity: '',
     price: '',
     deliveryRegions: '',
   });
-  const [csvPreview, setCsvPreview] = useState([]);
 
-  const handleChange = (e) => {
+  const onChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setForm(prev => ({ ...prev, [name]: value }));
   };
 
-  const addManualItem = (e) => {
+  const resetForm = () => setForm({
+    itemName: '',
+    brand: '',
+    quantity: '',
+    price: '',
+    deliveryRegions: '',
+  });
+
+  const validateRow = (row) => {
+    const qty = Number(row.quantity);
+    const price = Number(row.price);
+    return row.itemName && row.brand && qty > 0 && price >= 0 && row.deliveryRegions;
+  };
+
+  const handleAdd = (e) => {
     e.preventDefault();
-    const newItem = {
+    const row = {
       supplierName: user?.name || 'Supplier',
-      itemName: formData.itemName.trim(),
-      brand: formData.brand.trim(),
-      quantity: parseInt(formData.quantity || '0', 10),
-      price: parseFloat(formData.price || '0'),
-      deliveryRegions: formData.deliveryRegions.trim(),
+      itemName: form.itemName.trim(),
+      brand: form.brand.trim(),
+      quantity: Number(form.quantity),
+      price: Number(form.price),
+      deliveryRegions: form.deliveryRegions.trim(),
     };
-    if (!newItem.itemName || !newItem.brand || !newItem.quantity || !newItem.price || !newItem.deliveryRegions) {
-      alert('Please fill out all fields.');
+    if (!validateRow(row)) {
+      alert('Please complete all fields. Quantity must be > 0, price ≥ 0.');
       return;
     }
-    addInventoryItem(newItem);
-    setFormData({ itemName: '', brand: '', quantity: '', price: '', deliveryRegions: '' });
-    alert('Item added to global inventory.');
+    addInventoryItem(row);
+    resetForm();
   };
 
-  const handleCsvSelect = (file) => {
+  // CSV import
+  const onCSV = (e) => {
+    const file = e.target.files?.[0];
     if (!file) return;
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
-      complete: (res) => {
-        const rows = (res.data || [])
-          .filter(r => String(r.itemName || '').trim() !== '')
+      complete: (result) => {
+        const rows = (result.data || [])
           .map(r => ({
-            supplierName: user?.name || 'CSV Supplier',
-            itemName: String(r.itemName || '').trim(),
-            brand: String(r.brand || '').trim(),
-            quantity: parseInt(String(r.quantity || '0'), 10) || 0,
-            price: parseFloat(String(r.price || '0')) || 0,
-            deliveryRegions: String(r.deliveryRegions || '').trim(),
-          }));
-        setCsvPreview(rows);
-      },
-      error: (err) => alert('CSV parse error: ' + err.message),
+            supplierName: user?.name || 'Supplier',
+            itemName: String(r.itemName || r.Item || '').trim(),
+            brand: String(r.brand || r.Brand || '').trim(),
+            quantity: Number(r.quantity || r.Qty || r.qty || 0),
+            price: Number(r.price || r.Price || 0),
+            deliveryRegions: String(r.deliveryRegions || r.regions || '').trim(),
+          }))
+          .filter(validateRow);
+
+        if (!rows.length) {
+          alert('No valid rows found. Ensure headers include itemName, brand, quantity, price, deliveryRegions.');
+          return;
+        }
+        addInventoryBulk(rows);
+        e.target.value = ''; // reset input
+      }
     });
   };
 
-  const importCsvRows = () => {
-    if (!csvPreview.length) { alert('No CSV rows to import.'); return; }
-    addInventoryBulk(csvPreview);
-    setCsvPreview([]);
-    alert('CSV rows imported into global inventory.');
+  // Filter to "my" inventory
+  const myInventory = useMemo(() => {
+    const me = (user?.name || '').trim().toLowerCase();
+    return inventory.filter(i => (i.supplierName || '').trim().toLowerCase() === me);
+  }, [inventory, user]);
+
+  // Inline edit state: { [id]: { fieldName: value, ... } }
+  const [editById, setEditById] = useState({});
+
+  const startEdit = (row) => {
+    setEditById(prev => ({
+      ...prev,
+      [row.id]: {
+        itemName: row.itemName,
+        brand: row.brand,
+        quantity: String(row.quantity),
+        price: String(row.price),
+        deliveryRegions: row.deliveryRegions,
+      }
+    }));
+  };
+
+  const cancelEdit = (id) => {
+    setEditById(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const onEditField = (id, field, value) => {
+    setEditById(prev => ({
+      ...prev,
+      [id]: { ...(prev[id] || {}), [field]: value }
+    }));
+  };
+
+  const saveEdit = (id) => {
+    const draft = editById[id];
+    const row = {
+      itemName: draft.itemName.trim(),
+      brand: draft.brand.trim(),
+      quantity: Number(draft.quantity),
+      price: Number(draft.price),
+      deliveryRegions: draft.deliveryRegions.trim(),
+    };
+    if (!validateRow(row)) {
+      alert('Please complete all fields. Quantity must be > 0, price ≥ 0.');
+      return;
+    }
+    updateInventoryItem(id, row);
+    cancelEdit(id);
+  };
+
+  const removeRow = (id) => {
+    if (window.confirm('Delete this item from your inventory?')) {
+      deleteInventoryItem(id);
+    }
   };
 
   return (
     <div className="gap-8">
       <div className="card">
         <h2>Inventory Upload</h2>
-        <div className="kv mt-8">Supplier: <b>{user?.name}</b></div>
+        <p style={{ color: 'var(--muted)' }}>
+          You’re signed in as <b>{user?.name || 'Supplier'}</b>. Items you add are visible to you and used for matching.
+        </p>
 
-        <form onSubmit={addManualItem} className="form-grid mt-8">
-          <input className="input" name="itemName" placeholder="Item Name" value={formData.itemName} onChange={handleChange} required />
-          <input className="input" name="brand" placeholder="Brand" value={formData.brand} onChange={handleChange} required />
-          <input className="input" type="number" name="quantity" placeholder="Quantity Available" value={formData.quantity} onChange={handleChange} required />
-          <input className="input" type="number" step="0.01" name="price" placeholder="Price per Unit" value={formData.price} onChange={handleChange} required />
-          <input className="input" name="deliveryRegions" placeholder="Delivery Regions (comma separated)" value={formData.deliveryRegions} onChange={handleChange} required />
-          <div className="form-actions" style={{ gridColumn: '1 / -1' }}>
-            <button type="submit" className="button primary">Add Item</button>
+        <form onSubmit={handleAdd} className="mt-16">
+          <div className="form-grid">
+            <input className="input" name="itemName" placeholder="Item Name (e.g., Amoxicillin 500mg)"
+              value={form.itemName} onChange={onChange} required />
+            <input className="input" name="brand" placeholder="Brand" value={form.brand} onChange={onChange} required />
+            <input className="input" type="number" min="1" name="quantity" placeholder="Quantity"
+              value={form.quantity} onChange={onChange} required />
+            <input className="input" type="number" min="0" step="0.01" name="price" placeholder="Unit Price"
+              value={form.price} onChange={onChange} required />
+            <input className="input" name="deliveryRegions" placeholder="Delivery Regions (comma-separated)"
+              value={form.deliveryRegions} onChange={onChange} required />
+          </div>
+
+          <div className="form-actions" style={{ marginTop: 12 }}>
+            <button type="submit" className="button primary">Add to Inventory</button>
+            <label className="button ghost" style={{ marginLeft: 8 }}>
+              Import CSV
+              <input type="file" accept=".csv" onChange={onCSV} style={{ display: 'none' }} />
+            </label>
           </div>
         </form>
       </div>
 
       <div className="card">
-        <h3>Upload via CSV</h3>
-        <div className="mt-8">
-          <input type="file" accept=".csv" onChange={(e) => handleCsvSelect(e.target.files?.[0])} />
-          <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>
-            Expected headers (supplier auto-set): <code>itemName,brand,quantity,price,deliveryRegions</code>
+        <h3>My Inventory</h3>
+        <div className="mt-8" style={{ overflowX: 'auto' }}>
+          <table className="table" style={{ minWidth: 900 }}>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Brand</th>
+                <th>Qty</th>
+                <th>Price</th>
+                <th>Regions</th>
+                <th style={{ width: 200 }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {myInventory.length === 0 && (
+                <tr>
+                  <td colSpan={6}>
+                    <span className="badge info">No items yet. Add above or import a CSV.</span>
+                  </td>
+                </tr>
+              )}
+              {myInventory.map((row) => {
+                const draft = editById[row.id];
+                const editing = Boolean(draft);
+                return (
+                  <tr key={row.id}>
+                    <td>
+                      {editing ? (
+                        <input
+                          className="input"
+                          value={draft.itemName}
+                          onChange={(e) => onEditField(row.id, 'itemName', e.target.value)}
+                        />
+                      ) : <b>{row.itemName}</b>}
+                    </td>
+                    <td>
+                      {editing ? (
+                        <input
+                          className="input"
+                          value={draft.brand}
+                          onChange={(e) => onEditField(row.id, 'brand', e.target.value)}
+                        />
+                      ) : row.brand}
+                    </td>
+                    <td>
+                      {editing ? (
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          value={draft.quantity}
+                          onChange={(e) => onEditField(row.id, 'quantity', e.target.value)}
+                        />
+                      ) : row.quantity}
+                    </td>
+                    <td>
+                      {editing ? (
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={draft.price}
+                          onChange={(e) => onEditField(row.id, 'price', e.target.value)}
+                        />
+                      ) : `₱${Number(row.price).toFixed(2)}`}
+                    </td>
+                    <td>
+                      {editing ? (
+                        <input
+                          className="input"
+                          value={draft.deliveryRegions}
+                          onChange={(e) => onEditField(row.id, 'deliveryRegions', e.target.value)}
+                        />
+                      ) : row.deliveryRegions}
+                    </td>
+                    <td style={{ display: 'flex', gap: 8 }}>
+                      {!editing ? (
+                        <>
+                          <button className="button" onClick={() => startEdit(row)}>Edit</button>
+                          <button className="button danger" onClick={() => removeRow(row.id)}>Delete</button>
+                        </>
+                      ) : (
+                        <>
+                          <button className="button success" onClick={() => saveEdit(row.id)}>Save</button>
+                          <button className="button ghost" onClick={() => cancelEdit(row.id)}>Cancel</button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          <div className="mt-8" style={{ color: 'var(--muted)', fontSize: 12 }}>
+            Note: After you **Accept** a match, quantities are reduced automatically.
           </div>
         </div>
-
-        {csvPreview.length > 0 && (
-          <>
-            <div className="mt-16"><b>Preview ({csvPreview.length} rows)</b></div>
-            <div className="mt-8" style={{ maxHeight: 180, overflow: 'auto' }}>
-              {csvPreview.map((row, idx) => (
-                <div key={idx} className="row">
-                  <div className="kv">
-                    <b>{row.itemName}</b>
-                    <span>({row.brand})</span>
-                    <span>Qty {row.quantity}</span>
-                    <span>₱{row.price.toFixed(2)}</span>
-                    <span>{row.deliveryRegions}</span>
-                  </div>
-                  <span className="badge info">{row.supplierName}</span>
-                </div>
-              ))}
-            </div>
-            <button onClick={importCsvRows} className="button success mt-8">Import to Inventory</button>
-          </>
-        )}
       </div>
     </div>
   );

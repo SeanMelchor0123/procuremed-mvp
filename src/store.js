@@ -4,46 +4,70 @@ const AppStore = createContext(null);
 const norm = (s) => String(s || '').trim().toLowerCase();
 
 export const StoreProvider = ({ children }) => {
-  const [requests, setRequests] = useState([]);   // provider-created (open only)
-  const [inventory, setInventory] = useState([]); // supplier inventory
-  const [orders, setOrders] = useState([]);       // accepted allocations -> supplier worklist
+  // Grouped requests (requisitions with line items)
+  const [requisitions, setRequisitions] = useState([]);
 
-  // user: { id, name, role: 'supplier' | 'provider' }
+  // Supplier inventory & orders
+  const [inventory, setInventory] = useState([]);
+  const [orders, setOrders] = useState([]);
+
+  // Demo auth
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('pm_user') || 'null'); }
     catch { return null; }
   });
-
   useEffect(() => {
-    if (user) localStorage.setItem('pm_user', JSON.stringify(user));
-    else localStorage.removeItem('pm_user');
+    user
+      ? localStorage.setItem('pm_user', JSON.stringify(user))
+      : localStorage.removeItem('pm_user');
   }, [user]);
-
   const login = ({ name, role }) => setUser({ id: Date.now(), name: name.trim(), role });
   const logout = () => setUser(null);
 
-  // REQUESTS
-  const addRequest = (req) =>
-    setRequests(prev => [{ id: Date.now(), status: 'Open', ...req }, ...prev]);
+  // ----- REQUISITIONS -----
+  const addRequisition = (header, items) => {
+    const req = {
+      id: Date.now(),
+      createdAt: new Date().toISOString(),
+      deliveryDate: header.deliveryDate,
+      deliveryLocation: header.deliveryLocation,
+      urgency: header.urgency,
+      status: 'Open',
+      items: items.map((it, i) => ({
+        id: Date.now() + i + Math.random(),
+        itemName: it.itemName.trim(),
+        brand: it.brand.trim(),
+        quantity: parseInt(it.quantity, 10),
+        status: 'Open'
+      }))
+    };
+    setRequisitions(prev => [req, ...prev]);
+    return req.id;
+  };
 
-  const removeRequest = (id) =>
-    setRequests(prev => prev.filter(r => r.id !== id));
+  const markItemAccepted = (requisitionId, itemId) => {
+    setRequisitions(prev => prev.map(r => {
+      if (r.id !== requisitionId) return r;
+      const items = r.items.map(it => it.id === itemId ? { ...it, status: 'Accepted' } : it);
+      const allAccepted = items.every(it => it.status === 'Accepted');
+      return { ...r, items, status: allAccepted ? 'Closed' : r.status };
+    }));
+  };
 
-  // INVENTORY
+  // ----- INVENTORY (add/edit/delete/bulk) -----
   const addInventoryItem = (item) =>
     setInventory(prev => [{ id: Date.now(), ...item }, ...prev]);
 
   const addInventoryBulk = (rows) =>
     setInventory(prev => [...rows.map(r => ({ id: Date.now() + Math.random(), ...r })), ...prev]);
 
-  // ORDERS
-  const addOrders = (batch) =>
-    setOrders(prev => [...batch, ...prev]);
+  const updateInventoryItem = (id, patch) =>
+    setInventory(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i));
 
-  const updateOrderStatus = (orderId, status) =>
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status, updatedAt: new Date().toISOString() } : o));
+  const deleteInventoryItem = (id) =>
+    setInventory(prev => prev.filter(i => i.id !== id));
 
-  // Reduce inventory quantities based on accepted orders
+  // Reduce inventory on order acceptance
   const consumeInventoryForOrders = (batch) => {
     setInventory(prev => {
       const next = [...prev];
@@ -63,18 +87,21 @@ export const StoreProvider = ({ children }) => {
     });
   };
 
+  // ----- ORDERS -----
+  const addOrders = (batch) =>
+    setOrders(prev => [...batch, ...prev]);
+
+  const updateOrderStatus = (orderId, status) =>
+    setOrders(prev => prev.map(o => o.id === orderId ? ({ ...o, status, updatedAt: new Date().toISOString() }) : o));
+
   const value = useMemo(() => ({
-    // auth
     user, login, logout,
-    // data
-    requests, inventory, orders,
-    // requests
-    addRequest, removeRequest,
-    // inventory
+    requisitions, addRequisition, markItemAccepted,
+    inventory, orders,
     addInventoryItem, addInventoryBulk,
-    // orders
-    addOrders, updateOrderStatus, consumeInventoryForOrders,
-  }), [user, requests, inventory, orders]);
+    updateInventoryItem, deleteInventoryItem,   // <- ensure these are in the context
+    consumeInventoryForOrders, addOrders, updateOrderStatus,
+  }), [user, requisitions, inventory, orders]);
 
   return <AppStore.Provider value={value}>{children}</AppStore.Provider>;
 };
